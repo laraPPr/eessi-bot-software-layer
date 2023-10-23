@@ -23,7 +23,7 @@
 #    for example, repos.cfg and configuration file bundles for repositories
 
 echo "Starting bot-build.slurm"
-BOT_BUILD_SCRIPT=bot/build.sh
+BOT_BUILD_SCRIPT=bot/test-build-vsc.sh
 if [ -f ${BOT_BUILD_SCRIPT} ]; then
     echo "${BOT_BUILD_SCRIPT} script found in '${PWD}', so running it!"
     ${BOT_BUILD_SCRIPT}
@@ -32,7 +32,7 @@ else
     exit 1
 fi
 echo "bot/build.sh finished"
-CHECK_BUILD_SCRIPT=bot/check-build.sh
+CHECK_BUILD_SCRIPT=bot/test-check-build-vsc.sh
 if [ -f ${CHECK_BUILD_SCRIPT} ]; then
     echo "${CHECK_BUILD_SCRIPT} script found in '${PWD}', so running it!"
     ${CHECK_BUILD_SCRIPT}
