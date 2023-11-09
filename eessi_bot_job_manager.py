@@ -18,7 +18,6 @@
 #
 # The bot helps with requests to add software installations to the
 # EESSI software layer, see https://github.com/EESSI/software-layer
-#
 # author: Kenneth Hoste (@boegel)
 # author: Bob Droege (@bedroge)
 # author: Hafsa Naeem (@hafsa-naeem)
@@ -102,44 +101,51 @@ class EESSIBotSoftwareLayerJobManager:
         Raises:
             Exception: if the environment variable USER is not set
         """
+       
+        log("clusters {}(type:{})".format(self.clusters, type(self.clusters)))
         username = os.getenv('USER', None)
         if username is None:
             raise Exception("Unable to find username")
 
-        squeue_cmd = "%s --long --noheader --user=%s" % (self.poll_command, username)
-        squeue_output, squeue_err, squeue_exitcode = run_cmd(
-            squeue_cmd,
-            "get_current_jobs(): squeue command",
-            log_file=self.logfile,
-        )
-
         # create dictionary of jobs from output of 'squeue_cmd'
-        # with the following information per job: jobid, state,
-        # nodelist_reason
         current_jobs = {}
-        lines = str(squeue_output).rstrip().split("\n")
-        bad_state_messages = {
-            "F": "Failure",
-            "OOM": "Out of Memory",
-            "TO": "Time Out",
-        }
 
-        # get job info, logging any Slurm issues
-        # Note, all output lines of squeue are processed because we run it with
-        # --noheader.
-        for line in lines:
-            job = line.rstrip().split()
-            if len(job) >= 9:
-                job_id = job[0]
-                state = job[4]
-                current_jobs[job_id] = {
-                    "jobid": job_id,
-                    "state": state,
-                    "reason": job[8],
-                }
-                if state in bad_state_messages:
-                    log("Job {} in state {}: {}".format(job_id, state, bad_state_messages[state]))
+        for cluster in self.clusters:
+            squeue_cmd = "%s --long --noheader --user=%s --clusters=%s" % (self.poll_command, username, cluster)
+            squeue_output, squeue_err, squeue_exitcode = run_cmd(
+                squeue_cmd,
+                "get_current_jobs(): squeue command",
+                log_file=self.logfile,
+            )
 
+            # with the following information per job: jobid, state,
+            # nodelist_reason
+            lines = str(squeue_output).rstrip().split("\n")
+            bad_state_messages = {
+                "F": "Failure",
+                "OOM": "Out of Memory",
+                "TO": "Time Out",
+            }
+
+            # get job info, logging any Slurm issues
+            # Note, all output lines of squeue are processed because we run it with
+            # --noheader.
+            for line in lines:
+                job = line.rstrip().split()
+                if len(job) >= 9:
+                    job_id = job[0]
+                    cluster = job[1]
+                    state = job[4]
+                    current_jobs[job_id] = {
+                        "jobid": job_id,
+                        "state": state,
+                        "cluster": cluster,
+                        "reason": job[8],
+                    }
+                    if state in bad_state_messages:
+                        log("Job {} in state {}: {}".format(job_id, state, bad_state_messages[state]))
+        
+        log("jobs {}".format(current_jobs))
         return current_jobs
 
     def determine_running_jobs(self, current_jobs):
@@ -226,7 +232,8 @@ class EESSIBotSoftwareLayerJobManager:
         for ckey in current_jobs:
             if ckey not in known_jobs:
                 new_jobs.append(ckey)
-
+                
+        log("new jobs {}".format(new_jobs))
         return new_jobs
 
     def determine_finished_jobs(self, known_jobs, current_jobs):
@@ -301,10 +308,14 @@ class EESSIBotSoftwareLayerJobManager:
                 is not a bot job
         """
         job_id = new_job["jobid"]
+        log("cluster {}".format(new_job["cluster"]))
+        cluster = new_job["cluster"]
+        log("cluster {}".format(cluster))
 
-        scontrol_cmd = "%s --oneliner show jobid %s" % (
+        scontrol_cmd = "%s --oneliner show jobid %s --clusters=%s" % (
             self.scontrol_command,
             job_id,
+            cluster
         )
         scontrol_output, scontrol_err, scontrol_exitcode = run_cmd(
             scontrol_cmd,
@@ -345,9 +356,10 @@ class EESSIBotSoftwareLayerJobManager:
             )
             os.symlink(match.group(1), symlink_source)
 
-            release_cmd = "%s release %s" % (
+            release_cmd = "%s release %s --clusters=%s" % (
                 self.scontrol_command,
                 job_id,
+                cluster
             )
 
             release_output, release_err, release_exitcode = run_cmd(
@@ -607,6 +619,7 @@ def main():
     job_manager.poll_command = "false"
     poll_interval = 0
     job_manager.scontrol_command = ""
+    job_manager.clusters = []
     if max_iter != 0:
         cfg = config.read_config()
         job_mgr = cfg["job_manager"]
@@ -620,6 +633,8 @@ def main():
             poll_interval = 60
         job_manager.scontrol_command = job_mgr.get("scontrol_command") or False
         os.makedirs(job_manager.submitted_jobs_dir, exist_ok=True)
+        clusters_string = job_mgr.get("clusters")
+        job_manager.clusters = list(clusters_string.split(", "))
 
     # max_iter
     #   < 0: run loop indefinitely

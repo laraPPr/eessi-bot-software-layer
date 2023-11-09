@@ -103,7 +103,7 @@ def get_instance():
     #      after it has expired.
 
     # Check if PyGithub version is < 1.56
-    if hasarttr(github, 'GithubRetry'):
+    if hasattr(github, 'GithubRetry'):
         # PyGithub 2.x
         time_now = datetime.now(timezone.utc)
     else:
