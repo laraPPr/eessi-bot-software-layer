@@ -18,6 +18,7 @@
 #
 # The bot helps with requests to add software installations to the
 # EESSI software layer, see https://github.com/EESSI/software-layer
+#
 # author: Kenneth Hoste (@boegel)
 # author: Bob Droege (@bedroge)
 # author: Hafsa Naeem (@hafsa-naeem)
@@ -101,8 +102,6 @@ class EESSIBotSoftwareLayerJobManager:
         Raises:
             Exception: if the environment variable USER is not set
         """
-       
-        log("clusters {}(type:{})".format(self.clusters, type(self.clusters)))
         username = os.getenv('USER', None)
         if username is None:
             raise Exception("Unable to find username")
