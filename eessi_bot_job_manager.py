@@ -305,9 +305,7 @@ class EESSIBotSoftwareLayerJobManager:
                 is not a bot job
         """
         job_id = new_job["jobid"]
-        log("cluster {}".format(new_job["cluster"]))
         cluster = new_job["cluster"]
-        log("cluster {}".format(cluster))
 
         scontrol_cmd = "%s --oneliner show jobid %s --clusters=%s" % (
             self.scontrol_command,
