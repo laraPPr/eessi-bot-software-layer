@@ -184,6 +184,7 @@ def get_architecture_targets(cfg):
     log(f"{fn}(): arch target map '{json.dumps(arch_target_map)}'")
     return arch_target_map
 
+
 def get_repo_cfg(cfg):
     """
     Obtain mappings of architecture targets to repository identifiers and
