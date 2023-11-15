@@ -230,7 +230,7 @@ class EESSIBotSoftwareLayerJobManager:
         for ckey in current_jobs:
             if ckey not in known_jobs:
                 new_jobs.append(ckey)
-                
+
         return new_jobs
 
     def determine_finished_jobs(self, known_jobs, current_jobs):
