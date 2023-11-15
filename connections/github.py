@@ -109,6 +109,7 @@ def get_instance():
     else:
         # Pygithub 1.x
         time_now = datetime.utcnow()
+
     if not _gh or (_token and time_now > _token.expires_at):
         _gh = connect()
     return _gh
