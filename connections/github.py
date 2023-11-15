@@ -104,10 +104,10 @@ def get_instance():
 
     # Check if PyGithub version is < 1.56
     if hasattr(github, 'GithubRetry'):
-        # PyGithub 2.x
+        # Pygithub 2.x
         time_now = datetime.now(timezone.utc)
     else:
-        # PyGithub 1.x
+        # Pygithub 1.x
         time_now = datetime.utcnow()
     if not _gh or (_token and time_now > _token.expires_at):
         _gh = connect()
