@@ -143,7 +143,7 @@ class EESSIBotSoftwareLayerJobManager:
                     }
                     if state in bad_state_messages:
                         log("Job {} in state {}: {}".format(job_id, state, bad_state_messages[state]))
-        
+
         return current_jobs
 
     def determine_running_jobs(self, current_jobs):
