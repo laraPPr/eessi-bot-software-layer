@@ -144,7 +144,6 @@ class EESSIBotSoftwareLayerJobManager:
                     if state in bad_state_messages:
                         log("Job {} in state {}: {}".format(job_id, state, bad_state_messages[state]))
         
-        log("jobs {}".format(current_jobs))
         return current_jobs
 
     def determine_running_jobs(self, current_jobs):
@@ -232,7 +231,6 @@ class EESSIBotSoftwareLayerJobManager:
             if ckey not in known_jobs:
                 new_jobs.append(ckey)
                 
-        log("new jobs {}".format(new_jobs))
         return new_jobs
 
     def determine_finished_jobs(self, known_jobs, current_jobs):
