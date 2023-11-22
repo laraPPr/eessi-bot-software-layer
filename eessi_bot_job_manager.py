@@ -109,40 +109,39 @@ class EESSIBotSoftwareLayerJobManager:
         # create dictionary of jobs from output of 'squeue_cmd'
         current_jobs = {}
 
-        for cluster in self.clusters:
-            squeue_cmd = "%s --long --noheader --user=%s --clusters=%s" % (self.poll_command, username, cluster)
-            squeue_output, squeue_err, squeue_exitcode = run_cmd(
-                squeue_cmd,
-                "get_current_jobs(): squeue command",
-                log_file=self.logfile,
-            )
+        squeue_cmd = "%s --long --noheader --user=%s --clusters=%s" % (self.poll_command, username, cluster)
+        squeue_output, squeue_err, squeue_exitcode = run_cmd(
+            squeue_cmd,
+            "get_current_jobs(): squeue command",
+            log_file=self.logfile,
+        )
 
-            # with the following information per job: jobid, state,
-            # nodelist_reason
-            lines = str(squeue_output).rstrip().split("\n")
-            bad_state_messages = {
-                "F": "Failure",
-                "OOM": "Out of Memory",
-                "TO": "Time Out",
-            }
+        # with the following information per job: jobid, state,
+        # nodelist_reason
+        lines = str(squeue_output).rstrip().split("\n")
+        bad_state_messages = {
+            "F": "Failure",
+            "OOM": "Out of Memory",
+            "TO": "Time Out",
+        }
 
-            # get job info, logging any Slurm issues
-            # Note, all output lines of squeue are processed because we run it with
-            # --noheader.
-            for line in lines:
-                job = line.rstrip().split()
-                if len(job) >= 9:
-                    job_id = job[0]
-                    cluster = job[1]
-                    state = job[4]
-                    current_jobs[job_id] = {
-                        "jobid": job_id,
-                        "state": state,
-                        "cluster": cluster,
-                        "reason": job[8],
-                    }
-                    if state in bad_state_messages:
-                        log("Job {} in state {}: {}".format(job_id, state, bad_state_messages[state]))
+        # get job info, logging any Slurm issues
+        # Note, all output lines of squeue are processed because we run it with
+        # --noheader.
+        for line in lines:
+            job = line.rstrip().split()
+            if len(job) >= 9:
+                job_id = job[0]
+                cluster = job[1]
+                state = job[4]
+                current_jobs[job_id] = {
+                    "jobid": job_id,
+                    "state": state,
+                    "cluster": cluster,
+                    "reason": job[8],
+                }
+                if state in bad_state_messages:
+                    log("Job {} in state {}: {}".format(job_id, state, bad_state_messages[state]))
 
         return current_jobs
 
