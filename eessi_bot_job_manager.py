@@ -106,9 +106,6 @@ class EESSIBotSoftwareLayerJobManager:
         if username is None:
             raise Exception("Unable to find username")
 
-        # create dictionary of jobs from output of 'squeue_cmd'
-        current_jobs = {}
-
         squeue_cmd = "%s --long --noheader --user=%s" % (self.poll_command, username)
         squeue_output, squeue_err, squeue_exitcode = run_cmd(
             squeue_cmd,
@@ -116,8 +113,10 @@ class EESSIBotSoftwareLayerJobManager:
             log_file=self.logfile,
         )
 
+        # create dictionary of jobs from output of 'squeue_cmd'
         # with the following information per job: jobid, state,
         # nodelist_reason
+        current_jobs = {}
         lines = str(squeue_output).rstrip().split("\n")
         bad_state_messages = {
             "F": "Failure",
