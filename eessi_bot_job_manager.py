@@ -109,7 +109,7 @@ class EESSIBotSoftwareLayerJobManager:
         # create dictionary of jobs from output of 'squeue_cmd'
         current_jobs = {}
 
-        squeue_cmd = "%s --long --noheader --user=%s" % (self.poll_command, username, cluster)
+        squeue_cmd = "%s --long --noheader --user=%s" % (self.poll_command, username)
         squeue_output, squeue_err, squeue_exitcode = run_cmd(
             squeue_cmd,
             "get_current_jobs(): squeue command",
