@@ -109,7 +109,7 @@ class EESSIBotSoftwareLayerJobManager:
         # create dictionary of jobs from output of 'squeue_cmd'
         current_jobs = {}
 
-        squeue_cmd = "%s --long --noheader --user=%s --clusters=%s" % (self.poll_command, username, cluster)
+        squeue_cmd = "%s --long --noheader --user=%s" % (self.poll_command, username, cluster)
         squeue_output, squeue_err, squeue_exitcode = run_cmd(
             squeue_cmd,
             "get_current_jobs(): squeue command",
@@ -131,14 +131,14 @@ class EESSIBotSoftwareLayerJobManager:
         for line in lines:
             job = line.rstrip().split()
             if len(job) >= 9:
-                job_id = job[0]
-                cluster = job[1]
-                state = job[4]
+                job_id = job[1]
+                cluster = job[0]
+                state = job[5]
                 current_jobs[job_id] = {
                     "jobid": job_id,
                     "state": state,
                     "cluster": cluster,
-                    "reason": job[8],
+                    "reason": job[9],
                 }
                 if state in bad_state_messages:
                     log("Job {} in state {}: {}".format(job_id, state, bad_state_messages[state]))
@@ -613,7 +613,6 @@ def main():
     job_manager.poll_command = "false"
     poll_interval = 0
     job_manager.scontrol_command = ""
-    job_manager.clusters = []
     if max_iter != 0:
         cfg = config.read_config()
         job_mgr = cfg["job_manager"]
@@ -627,8 +626,6 @@ def main():
             poll_interval = 60
         job_manager.scontrol_command = job_mgr.get("scontrol_command") or False
         os.makedirs(job_manager.submitted_jobs_dir, exist_ok=True)
-        clusters_string = job_mgr.get("clusters")
-        job_manager.clusters = list(clusters_string.split(", "))
 
     # max_iter
     #   < 0: run loop indefinitely
