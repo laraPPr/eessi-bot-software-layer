@@ -325,7 +325,7 @@ def create_pr_dir(pr, cfg, event_info):
     return year_month, pr_id, run_dir
 
 
-def download_pr(repo_name, branch_name, pr, arch_job_dir):
+def download_pr(repo_name, branch_name, pr, arch_job_dir, token):
     """
     Download pull request to job working directory
 
@@ -344,7 +344,7 @@ def download_pr(repo_name, branch_name, pr, arch_job_dir):
     # - 'git checkout' base branch of pull request
     # - 'curl' diff for pull request
     # - 'git apply' diff file
-    git_clone_cmd = ' '.join(['git clone', f'https://github.com/{repo_name}', arch_job_dir])
+    git_clone_cmd = ' '.join(['git clone', f'git@github.com:{repo_name}.git', arch_job_dir])
     clone_output, clone_error, clone_exit_code = run_cmd(git_clone_cmd, "Clone repo", arch_job_dir)
 
     git_checkout_cmd = ' '.join([
@@ -354,7 +354,7 @@ def download_pr(repo_name, branch_name, pr, arch_job_dir):
     checkout_output, checkout_err, checkout_exit_code = run_cmd(git_checkout_cmd,
                                                                 "checkout branch '%s'" % branch_name, arch_job_dir)
 
-    curl_cmd = f'curl -L https://github.com/{repo_name}/pull/{pr.number}.diff > {pr.number}.diff'
+    curl_cmd = f'curl -H "Accept: application/vnd.github.diff" -H "Authorization: Bearer {token}"   -H "X-GitHub-Api-Version: 2022-11-28" -L https://api.github.com/repos/{repo_name}/pulls/{pr.number} > {pr.number}.diff'
     curl_output, curl_error, curl_exit_code = run_cmd(curl_cmd, "Obtain patch", arch_job_dir)
 
     git_apply_cmd = f'git apply {pr.number}.diff'
@@ -386,7 +386,7 @@ def apply_cvmfs_customizations(cvmfs_customizations, arch_job_dir):
             #      for now, only existing mappings may be customized
 
 
-def prepare_jobs(pr, cfg, event_info, action_filter):
+def prepare_jobs(pr, cfg, event_info, action_filter, token):
     """
     Prepare all jobs whose context matches the given filter. Preparation includes
     creating a working directory for a job, downloading the pull request into
@@ -453,7 +453,7 @@ def prepare_jobs(pr, cfg, event_info, action_filter):
             log(f"{fn}(): job_dir '{job_dir}'")
 
             # TODO optimisation? download once, copy and cleanup initial copy?
-            download_pr(base_repo_name, base_branch_name, pr, job_dir)
+            download_pr(base_repo_name, base_branch_name, pr, job_dir, token)
 
             # prepare job configuration file 'job.cfg' in directory <job_dir>/cfg
             cpu_target = '/'.join(arch.split('/')[1:])
@@ -671,7 +671,7 @@ def create_pr_comment(job, job_id, app_name, pr, gh, symlink):
         return None
 
 
-def submit_build_jobs(pr, event_info, action_filter):
+def submit_build_jobs(pr, event_info, action_filter, token):
     """
     Create build jobs for a pull request by preparing jobs which match the given
     filters, submitting them, adding comments to the pull request on GitHub and
@@ -693,7 +693,7 @@ def submit_build_jobs(pr, event_info, action_filter):
     app_name = cfg[GITHUB].get(APP_NAME)
 
     # setup job directories (one per element in product of architecture x repositories)
-    jobs = prepare_jobs(pr, cfg, event_info, action_filter)
+    jobs = prepare_jobs(pr, cfg, event_info, action_filter, token)
 
     # return if there are no jobs to be submitted
     if not jobs:

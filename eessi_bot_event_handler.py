@@ -438,10 +438,11 @@ class EESSIBotSoftwareLayer(PyGHee):
         repo_name = event_info['raw_request_body']['repository']['full_name']
         pr_number = event_info['raw_request_body']['issue']['number']
         pr = gh.get_repo(repo_name).get_pull(pr_number)
+        github_token = self.gh._Github__requester._Requester__authorizationHeader[6:]
         build_msg = ''
         if check_build_permission(pr, event_info):
             # use filter from command
-            submitted_jobs = submit_build_jobs(pr, event_info, bot_command.action_filters)
+            submitted_jobs = submit_build_jobs(pr, event_info, bot_command.action_filters, github_token)
             if submitted_jobs is None or len(submitted_jobs) == 0:
                 build_msg = "\n  - no jobs were submitted"
             else:
