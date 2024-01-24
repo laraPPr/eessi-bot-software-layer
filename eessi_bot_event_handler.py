@@ -438,7 +438,7 @@ class EESSIBotSoftwareLayer(PyGHee):
         repo_name = event_info['raw_request_body']['repository']['full_name']
         pr_number = event_info['raw_request_body']['issue']['number']
         pr = gh.get_repo(repo_name).get_pull(pr_number)
-        github_token = self..gh._Github__requester._Requester__auth.token
+        github_token = self.gh._Github__requester._Requester__auth.token
         build_msg = ''
         if check_build_permission(pr, event_info):
             # use filter from command
