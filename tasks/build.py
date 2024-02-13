@@ -38,6 +38,7 @@ BUILDENV = "buildenv"
 BUILD_JOB_SCRIPT = "build_job_script"
 BUILD_LOGS_DIR = "build_logs_dir"
 BUILD_PERMISSION = "build_permission"
+CFG_DIRNAME = "cfg"
 CONTAINER_CACHEDIR = "container_cachedir"
 CVMFS_CUSTOMIZATIONS = "cvmfs_customizations"
 DEFAULT_JOB_TIME_LIMIT = "24:00:00"
@@ -47,6 +48,7 @@ HTTP_PROXY = "http_proxy"
 INITIAL_COMMENT = "initial_comment"
 JOBS_BASE_DIR = "jobs_base_dir"
 JOB_ARCHITECTURE = "architecture"
+JOB_CFG_FILENAME = "job.cfg"
 JOB_CONTAINER = "container"
 JOB_LOCAL_TMP = "local_tmp"
 JOB_HTTPS_PROXY = "https_proxy"
@@ -64,7 +66,6 @@ LOAD_MODULES = "load_modules"
 LOCAL_TMP = "local_tmp"
 NO_BUILD_PERMISSION_COMMENT = "no_build_permission_comment"
 REPOS_CFG_DIR = "repos_cfg_dir"
-REPOS_ID = "repo_id"
 REPOS_REPO_NAME = "repo_name"
 REPOS_REPO_VERSION = "repo_version"
 REPOS_CONFIG_BUNDLE = "config_bundle"
@@ -198,8 +199,8 @@ def get_repo_cfg(cfg):
         (dict): dictionary containing repository settings as follows
            - {REPOS_CFG_DIR: path to repository config directory as defined in 'app.cfg'}
            - {REPO_TARGET_MAP: json of REPO_TARGET_MAP value as defined in 'app.cfg'}
-           - for all sections [REPO_ID] defined in REPOS_CFG_DIR/repos.cfg add a
-             mapping {REPO_ID: dictionary containing settings of that section}
+           - for all sections [JOB_REPO_ID] defined in REPOS_CFG_DIR/repos.cfg add a
+             mapping {JOB_REPO_ID: dictionary containing settings of that section}
     """
     fn = sys._getframe().f_code.co_name
 
@@ -430,9 +431,9 @@ def prepare_jobs(pr, cfg, event_info, action_filter, token):
             log(f"{fn}(): skipping arch {arch} because repo target map does not define repositories to build for")
             continue
         for repo_id in repocfg[REPO_TARGET_MAP][arch]:
-            # ensure repocfg contains information about the repository repo_id if repo_id != EESSI-pilot
-            # Note, EESSI-pilot is a bad/misleading name, it should be more like AS_IN_CONTAINER
-            if repo_id != "EESSI-pilot" and repo_id not in repocfg:
+            # ensure repocfg contains information about the repository repo_id if repo_id != EESSI
+            # Note, EESSI is a bad/misleading name, it should be more like AS_IN_CONTAINER
+            if (repo_id != "EESSI" and repo_id != "EESSI-pilot") and repo_id not in repocfg:
                 log(f"{fn}(): skipping repo {repo_id}, it is not defined in repo config {repocfg[REPOS_CFG_DIR]}")
                 continue
 
@@ -489,7 +490,7 @@ def prepare_job_cfg(job_dir, build_env_cfg, repos_cfg, repo_id, software_subdir,
     """
     fn = sys._getframe().f_code.co_name
 
-    jobcfg_dir = os.path.join(job_dir, 'cfg')
+    jobcfg_dir = os.path.join(job_dir, CFG_DIRNAME)
     # create ini file job.cfg with entries:
     # [site_config]
     # local_tmp = LOCAL_TMP_VALUE
@@ -498,7 +499,7 @@ def prepare_job_cfg(job_dir, build_env_cfg, repos_cfg, repo_id, software_subdir,
     #
     # [repository]
     # repos_cfg_dir = JOB_CFG_DIR
-    # repo_id = REPO_ID
+    # repo_id = JOB_REPO_ID
     # container = CONTAINER
     # repo_name = REPO_NAME
     # repo_version = REPO_VERSION
@@ -555,7 +556,7 @@ def prepare_job_cfg(job_dir, build_env_cfg, repos_cfg, repo_id, software_subdir,
     # make sure that <jobcfg_dir> exists
     os.makedirs(jobcfg_dir, exist_ok=True)
 
-    jobcfg_file = os.path.join(jobcfg_dir, 'job.cfg')
+    jobcfg_file = os.path.join(jobcfg_dir, JOB_CFG_FILENAME)
     with open(jobcfg_file, "w") as jcf:
         job_cfg.write(jcf)
 
@@ -759,3 +760,78 @@ def check_build_permission(pr, event_info):
     else:
         log(f"{fn}(): GH account '{build_labeler}' is authorized to build")
         return True
+
+
+def request_bot_build_issue_comments(repo_name, pr_number):
+    """
+    Query the github API for the issue_comments in a pr.
+
+    Archs:
+        repo_name (string): name of the repository (format USER_OR_ORGANISATION/REPOSITORY)
+        pr_number (int): number og the pr
+
+    Returns:
+        status_table (dict): dictionary with 'arch', 'date', 'status', 'url' and 'result'
+            for all the finished builds;
+    """
+    status_table = {'arch': [], 'date': [], 'status': [], 'url': [], 'result': []}
+    cfg = config.read_config()
+
+    # for loop because github has max 100 items per request.
+    # if the pr has more than 100 comments we need to use per_page
+    # argument at the moment the for loop is for a max of 400 comments could bump this up
+    for x in range(1, 5):
+        curl_cmd = f'curl -L https://api.github.com/repos/{repo_name}/issues/{pr_number}/comments?per_page=100&page={x}'
+        curl_output, curl_error, curl_exit_code = run_cmd(curl_cmd, "fetch all comments")
+
+        comments = json.loads(curl_output)
+
+        for comment in comments:
+            # iterate through the comments to find the one where the status of the build was in
+            if config.read_config()["submitted_job_comments"]['initial_comment'][:20] in comment['body']:
+
+                # get archictecture from comment['body']
+                first_line = comment['body'].split('\n')[0]
+                arch_map = get_architecture_targets(cfg)
+                for arch in arch_map.keys():
+                    target_arch = '/'.join(arch.split('/')[1:])
+                    if target_arch in first_line:
+                        status_table['arch'].append(target_arch)
+
+                # get date, status, url and result from the markdown table
+                comment_table = comment['body'][comment['body'].find('|'):comment['body'].rfind('|')+1]
+
+                # Convert markdown table to a dictionary
+                lines = comment_table.split('\n')
+                rows = []
+                keys = []
+                for i, row in enumerate(lines):
+                    values = {}
+                    if i == 0:
+                        for key in row.split('|'):
+                            keys.append(key.strip())
+                    elif i == 1:
+                        continue
+                    else:
+                        for j, value in enumerate(row.split('|')):
+                            if j > 0 and j < len(keys) - 1:
+                                values[keys[j]] = value.strip()
+                        rows.append(values)
+
+                # add date, status, url to  status_table if
+                for row in rows:
+                    if row['job status'] == 'finished':
+                        status_table['date'].append(row['date'])
+                        status_table['status'].append(row['job status'])
+                        status_table['url'].append(comment['html_url'])
+                        if 'FAILURE' in row['comment']:
+                            status_table['result'].append(':cry: FAILURE')
+                        elif 'SUCCESS' in value['comment']:
+                            status_table['result'].append(':grin: SUCCESS')
+                        elif 'UNKNOWN' in row['comment']:
+                            status_table['result'].append(':shrug: UNKNOWN')
+                        else:
+                            status_table['result'].append(row['comment'])
+        if len(comments) != 100:
+            break
+    return status_table

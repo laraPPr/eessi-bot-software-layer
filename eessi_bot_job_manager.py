@@ -42,7 +42,7 @@ from pyghee.utils import log
 from connections import github
 from tools import config, run_cmd
 from tools.args import job_manager_parse
-from tools.job_metadata import read_metadata_file
+from tools.job_metadata import read_job_metadata_from_file, read_metadata_file
 from tools.pr_comments import get_submitted_job_comment, update_comment
 
 
@@ -51,6 +51,8 @@ FAILURE = "failure"
 FINISHED_JOB_COMMENTS = "finished_job_comments"
 JOB_RESULT_COMMENT_DESCRIPTION = "comment_description"
 JOB_RESULT_UNKNOWN_FMT = "job_result_unknown_fmt"
+JOB_TEST_COMMENT_DESCRIPTION = "comment_description"
+JOB_TEST_UNKNOWN_FMT = "job_test_unknown_fmt"
 MISSING_MODULES = "missing_modules"
 MULTIPLE_TARBALLS = "multiple_tarballs"
 NEW_JOB_COMMENTS = "new_job_comments"
@@ -251,24 +253,6 @@ class EESSIBotSoftwareLayerJobManager:
 
         return finished_jobs
 
-    def read_job_pr_metadata(self, job_metadata_path):
-        """
-        Read job metadata file and return the contents of the 'PR' section.
-
-        Args:
-            job_metadata_path (string): path to job metadata file
-
-        Returns:
-            (ConfigParser): instance of ConfigParser corresponding to the 'PR'
-                section or None
-        """
-        # reuse function from module tools.job_metadata to read metadata file
-        metadata = read_metadata_file(job_metadata_path, self.logfile)
-        if metadata and "PR" in metadata:
-            return metadata["PR"]
-        else:
-            return None
-
     def read_job_result(self, job_result_file_path):
         """
         Read job result file and return the contents of the 'RESULT' section.
@@ -284,6 +268,24 @@ class EESSIBotSoftwareLayerJobManager:
         result = read_metadata_file(job_result_file_path, self.logfile)
         if result and "RESULT" in result:
             return result["RESULT"]
+        else:
+            return None
+
+    def read_job_test(self, job_test_file_path):
+        """
+        Read job test file and return the contents of the 'TEST' section.
+
+        Args:
+            job_test_file_path (string): path to job test file
+
+        Returns:
+            (ConfigParser): instance of ConfigParser corresponding to the
+                'TEST' section or None
+        """
+        # reuse function from module tools.job_metadata to read metadata file
+        test = read_metadata_file(job_test_file_path, self.logfile)
+        if test and "TEST" in test:
+            return test["TEST"]
         else:
             return None
 
@@ -334,7 +336,7 @@ class EESSIBotSoftwareLayerJobManager:
 
             # assuming that a bot job's working directory contains a metadata
             # file, its existence is used to check if the job belongs to the bot
-            metadata_pr = self.read_job_pr_metadata(job_metadata_path)
+            metadata_pr = read_job_metadata_from_file(job_metadata_path, self.logfile)
 
             if metadata_pr is None:
                 log(f"No metadata file found at {job_metadata_path} for job {job_id}, so skipping it",
@@ -431,7 +433,7 @@ class EESSIBotSoftwareLayerJobManager:
         job_metadata_path = os.path.join(job_dir, metadata_file)
 
         # check if metadata file exist
-        metadata_pr = self.read_job_pr_metadata(job_metadata_path)
+        metadata_pr = read_job_metadata_from_file(job_metadata_path, self.logfile)
         if metadata_pr is None:
             raise Exception("Unable to find metadata file")
 
@@ -475,7 +477,8 @@ class EESSIBotSoftwareLayerJobManager:
         """
         Process a finished job by
         - moving the symlink to the directory storing finished jobs,
-        - updating the PR comment with information from '*.result' file
+        - updating the PR comment with information from '*.result' and '*.test'
+          files
 
         Args:
             finished_job (dict): dictionary with information about the job
@@ -502,14 +505,21 @@ class EESSIBotSoftwareLayerJobManager:
         os.rename(old_symlink, new_symlink)
 
         # REPORT status (to logfile in any case, to PR comment if accessible)
-        #   rely fully on what bot/check-build.sh has returned
-        #   check if file _bot_jobJOBID.result exists --> if so read it and
-        #   update PR comment
-        # contents of *.result file (here we only use section [RESULT])
-        #   [RESULT]
-        #   comment_description = _FULLY_DEFINED_UPDATE_TO_PR_COMMENT_
-        #   status = {SUCCESS,FAILURE,UNKNOWN}
-        #   artefacts = _LIST_OF_ARTEFACTS_TO_BE_DEPLOYED_
+        #  - rely fully on what bot/check-build.sh and bot/check-test.sh have
+        #    returned
+        #  - check if file _bot_jobJOBID.result exists --> if so read it and
+        #    update PR comment
+        #    . contents of *.result file (here we only use section [RESULT])
+        #      [RESULT]
+        #      comment_description = _FULLY_DEFINED_UPDATE_TO_PR_COMMENT_
+        #      status = {SUCCESS,FAILURE,UNKNOWN}
+        #      artefacts = _LIST_OF_ARTEFACTS_TO_BE_DEPLOYED_
+        #  - check if file _bot_jobJOBID.test exists --> if so read it and
+        #    update PR comment
+        #    . contents of *.test file (here we only use section [TEST])
+        #      [TEST]
+        #      comment_description = _FULLY_DEFINED_UPDATE_TO_PR_COMMENT_
+        #      status = {SUCCESS,FAILURE,UNKNOWN}
 
         # obtain format templates from app.cfg
         finished_job_comments_cfg = config.read_config()[FINISHED_JOB_COMMENTS]
@@ -538,10 +548,37 @@ class EESSIBotSoftwareLayerJobManager:
         comment_update = f"\n|{dt.strftime('%b %d %X %Z %Y')}|finished|"
         comment_update += f"{comment_description}|"
 
+        # check if _bot_jobJOBID.test exits
+        # TODO if not found, assume test was not run (or failed, or ...) and add
+        # a message noting that ('not tested' + 'test suite not run or failed')
+        # --> bot/test.sh and bot/check-test.sh scripts are run in job script used by bot for 'build' action
+        job_test_file = f"_bot_job{job_id}.test"
+        job_test_file_path = os.path.join(new_symlink, job_test_file)
+        job_tests = self.read_job_test(job_test_file_path)
+
+        job_test_unknown_fmt = finished_job_comments_cfg[JOB_TEST_UNKNOWN_FMT]
+        # set fallback comment_description in case no test file was found
+        # (self.read_job_result returned None)
+        comment_description = job_test_unknown_fmt.format(filename=job_test_file)
+        if job_tests:
+            # get preformatted comment_description or use previously set default for unknown
+            comment_description = job_tests.get(JOB_TEST_COMMENT_DESCRIPTION, comment_description)
+
+        # report to log
+        log(f"{fn}(): finished job {job_id}, test suite result\n"
+            f"########\n"
+            f"comment_description: {comment_description}\n"
+            f"########\n", self.logfile)
+
+        dt = datetime.now(timezone.utc)
+
+        comment_update += f"\n|{dt.strftime('%b %d %X %Z %Y')}|test result|"
+        comment_update += f"{comment_description}|"
+
         # obtain id of PR comment to be updated (from file '_bot_jobID.metadata')
         metadata_file = f"_bot_job{job_id}.metadata"
         job_metadata_path = os.path.join(new_symlink, metadata_file)
-        metadata_pr = self.read_job_pr_metadata(job_metadata_path)
+        metadata_pr = read_job_metadata_from_file(job_metadata_path, self.logfile)
         if metadata_pr is None:
             raise Exception("Unable to find metadata file ... skip updating PR comment")
 
