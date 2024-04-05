@@ -371,7 +371,7 @@ def download_pr(repo_name, branch_name, pr, arch_job_dir, token):
         git_clone_cmd, "Clone repo", arch_job_dir, raise_on_error=False
         )
     if clone_exit_code != 0:
-        errror_stage = ERROR_GIT_CLONE
+        error_stage = ERROR_GIT_CLONE
         return clone_output, clone_error, clone_exit_code, error_stage
 
     git_checkout_cmd = ' '.join([
