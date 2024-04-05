@@ -4,9 +4,13 @@
 # The bot helps with requests to add software installations to the
 # EESSI software layer, see https://github.com/EESSI/software-layer
 #
-# author: Kenneth Hoste (@boegel)
 # author: Bob Droege (@bedroge)
+# author: Kenneth Hoste (@boegel)
 # author: Hafsa Naeem (@hafsa-naeem)
+# author: Jacob Ziemke (@jacobz137)
+# author: Jonas Qvigstad (@jonas-lq)
+# author: Lara Ramona Peeters (@laraPPr)
+# author: Pedro Santos Neves (@Neves-P)
 # author: Thomas Roeblitz (@trz42)
 #
 # license: GPLv2
@@ -40,9 +44,23 @@ BUILD_LOGS_DIR = "build_logs_dir"
 BUILD_PERMISSION = "build_permission"
 CFG_DIRNAME = "cfg"
 CONTAINER_CACHEDIR = "container_cachedir"
+CURL_FAILURE = "curl_failure"
+CURL_TIP = "curl_tip"
 CVMFS_CUSTOMIZATIONS = "cvmfs_customizations"
 DEFAULT_JOB_TIME_LIMIT = "24:00:00"
+DOWNLOAD_PR_COMMENTS = "download_pr_comments"
+ERROR_CURL = "curl"
+ERROR_GIT_APPLY = "git apply"
+ERROR_GIT_CHECKOUT = "git checkout"
+ERROR_GIT_CLONE = "curl"
+ERROR_NONE = "none"
 GITHUB = "github"
+GIT_CLONE_FAILURE = "git_clone_failure"
+GIT_CLONE_TIP = "git_clone_tip"
+GIT_CHECKOUT_FAILURE = "git_checkout_failure"
+GIT_CHECKOUT_TIP = "git_checkout_tip"
+GIT_APPLY_FAILURE = "git_apply_failure"
+GIT_APPLY_TIP = "git_apply_tip"
 HTTPS_PROXY = "https_proxy"
 HTTP_PROXY = "http_proxy"
 INITIAL_COMMENT = "initial_comment"
@@ -337,7 +355,9 @@ def download_pr(repo_name, branch_name, pr, arch_job_dir, token):
         arch_job_dir (string): working directory of the job to be submitted
 
     Returns:
-        None (implicitly)
+        None (implicitly), in case an error is caught in the git clone, git checkout, curl,
+            or git apply commands, returns the output, stderror, exit code and a string
+            stating which of these commands failed.
     """
     # download pull request to arch_job_dir
     # - 'git clone' repository into arch_job_dir (NOTE 'git clone' requires that
@@ -345,21 +365,95 @@ def download_pr(repo_name, branch_name, pr, arch_job_dir, token):
     # - 'git checkout' base branch of pull request
     # - 'curl' diff for pull request
     # - 'git apply' diff file
+
     git_clone_cmd = ' '.join(['git clone', f'git@github.com:{repo_name}.git', arch_job_dir])
-    clone_output, clone_error, clone_exit_code = run_cmd(git_clone_cmd, "Clone repo", arch_job_dir)
+    clone_output, clone_error, clone_exit_code = run_cmd(
+        git_clone_cmd, "Clone repo", arch_job_dir, raise_on_error=False
+        )
+    if clone_exit_code != 0:
+        errror_stage = ERROR_GIT_CLONE
+        return clone_outputn clone_error, clone_exit_code, error_stage
 
     git_checkout_cmd = ' '.join([
         'git checkout',
         branch_name,
     ])
-    checkout_output, checkout_err, checkout_exit_code = run_cmd(git_checkout_cmd,
-                                                                "checkout branch '%s'" % branch_name, arch_job_dir)
+    log(f'checking out with command {git_checkout_cmd}')
+    checkout_output, checkout_err, checkout_exit_code = run_cmd(
+        git_checkout_cmd, "checkout branch '%s'" % branch_name, arch_job_dir, raise_on_error=False
+        )
+    if checkout_exit_code != 0:
+        error_stage = ERROR_GIT_CHECKOUT
+        return checkout_output, checkout_err, checkout_exit_code, error_stage
 
     curl_cmd = f'curl -H "Accept: application/vnd.github.diff" -H "Authorization: Bearer {token}"   -H "X-GitHub-Api-Version: 2022-11-28" -L https://api.github.com/repos/{repo_name}/pulls/{pr.number} > {pr.number}.diff'
-    curl_output, curl_error, curl_exit_code = run_cmd(curl_cmd, "Obtain patch", arch_job_dir)
+    log(f'curl with command {curl_cmd}')
+    curl_output, curl_error, curl_exit_code = run_cmd(
+        curl_cmd, "Obtain patch", arch_job_dir, raise_on_error=False
+        )
+    if curl_exit_code != 0:
+        error_stage = ERROR_CURL
+        return curl_output, curl_error, curl_exit_code, error_stage
 
     git_apply_cmd = f'git apply {pr.number}.diff'
-    git_apply_output, git_apply_error, git_apply_exit_code = run_cmd(git_apply_cmd, "Apply patch", arch_job_dir)
+    log(f'git apply with command {git_apply_cmd}')
+    git_apply_output, git_apply_error, git_apply_exit_code = run_cmd(
+        git_apply_cmd, "Apply patch", arch_job_dir, raise_on_error=False
+        )
+    if git_apply_exit_code != 0:
+        error_stage = ERROR_GIT_APPLY
+        return git_apply_output, git_apply_error, git_apply_exit_code, error_stage
+
+    # need to return four items also in case everything went fine
+    return 'downloading PR succeeded', 'no error while downloading PR', 0, ERROR_NONE
+
+
+def comment_download_pr(base_repo_name, pr, download_pr_exit_code, download_pr_error, error_stage):
+    """
+    Handle download_pr() exit code and write helpful comment to PR in case of failure
+
+    Args:
+        base_repo_name (string): name of the repository (format USER_OR_ORGANISATION/REPOSITORY)
+        pr (github.PullRequest.PullRequest): instance representing the pull request
+        download_pr_exit_code (int): exit code from download_pr(). 0 if all tasks were successful,
+            otherwise it corresponds to the error codes of git clone, git checkout, git apply, or curl.
+        download_pr_error (string): none, or the output of stderr from git clone, git checkout, git apply or curl.
+        error_stage (string): a string informing the stage where download_pr() failed. Can be 'git clone',
+            'git checkout', 'curl', or 'git apply'.
+
+    Return:
+        None (implicitly). A comment is created in the appropriate PR.
+
+    """
+    if download_pr_exit_code != 0:
+        fn = sys._getframe().f_code.co_name
+
+        download_pr_comments_cfg = config.read_config()[DOWNLOAD_PR_COMMENTS]
+        if error_stage == ERROR_GIT_CLONE:
+            download_comment = (f"`{download_pr_error}`"
+                                f"{download_pr_comments_cfg[GIT_CLONE_FAILURE]}"
+                                f"{download_pr_comments_cfg[GIT_CLONE_TIP]}")
+        elif error_stage == ERROR_GIT_CHECKOUT:
+            download_comment = (f"`{download_pr_error}`"
+                                f"{download_pr_comments_cfg[GIT_CHECKOUT_FAILURE]}"
+                                f"{download_pr_comments_cfg[GIT_CHECKOUT_TIP]}")
+        elif error_stage == ERROR_CURL:
+            download_comment = (f"`{download_pr_error}`"
+                                f"{download_pr_comments_cfg[CURL_FAILURE]}"
+                                f"{download_pr_comments_cfg[CURL_TIP]}")
+        elif error_stage == ERROR_GIT_APPLY:
+            download_comment = (f"`{download_pr_error}`"
+                                f"{download_pr_comments_cfg[GIT_APPLY_FAILURE]}"
+                                f"{download_pr_comments_cfg[GIT_APPLY_TIP]}")
+
+        download_comment = pr_comments.create_comment(
+            repo_name=base_repo_name, pr_number=pr.number, comment=download_comment
+            )
+        if download_comment:
+            log(f"{fn}(): created PR issue comment with id {download_comment.id}")
+        else:
+            log(f"{fn}(): failed to create PR issue comment")
+        raise ValueError("Unable to download PR and/or sync changes")
 
 
 def apply_cvmfs_customizations(cvmfs_customizations, arch_job_dir):
@@ -454,8 +548,11 @@ def prepare_jobs(pr, cfg, event_info, action_filter, token):
             log(f"{fn}(): job_dir '{job_dir}'")
 
             # TODO optimisation? download once, copy and cleanup initial copy?
-            download_pr(base_repo_name, base_branch_name, pr, job_dir, token)
-
+            download_pr_output, download_pr_error, download_pr_exit_code, error_stage = download_pr(
+                base_repo_name, base_branch_name, pr, job_dir, token
+            )
+            comment_download_pr(base_repo_name, pr, download_pr_exit_code, download_pr_error, error_stage)
+            
             # prepare job configuration file 'job.cfg' in directory <job_dir>/cfg
             cpu_target = '/'.join(arch.split('/')[1:])
             os_type = arch.split('/')[0]
@@ -774,6 +871,8 @@ def request_bot_build_issue_comments(repo_name, pr_number):
         status_table (dict): dictionary with 'arch', 'date', 'status', 'url' and 'result'
             for all the finished builds;
     """
+    fn = sys._getframe().f_code.co_name
+
     status_table = {'arch': [], 'date': [], 'status': [], 'url': [], 'result': []}
     cfg = config.read_config()
 
@@ -794,9 +893,12 @@ def request_bot_build_issue_comments(repo_name, pr_number):
                 first_line = comment['body'].split('\n')[0]
                 arch_map = get_architecture_targets(cfg)
                 for arch in arch_map.keys():
-                    target_arch = '/'.join(arch.split('/')[1:])
+                    # drop the first element in arch (which names the OS type) and join the remaining items with '-'
+                    target_arch = '-'.join(arch.split('/')[1:])
                     if target_arch in first_line:
                         status_table['arch'].append(target_arch)
+                    else:
+                        log(f"{fn}(): target_arch '{target_arch}' not found in first line '{first_line}'")
 
                 # get date, status, url and result from the markdown table
                 comment_table = comment['body'][comment['body'].find('|'):comment['body'].rfind('|')+1]
@@ -826,7 +928,7 @@ def request_bot_build_issue_comments(repo_name, pr_number):
                         status_table['url'].append(comment['html_url'])
                         if 'FAILURE' in row['comment']:
                             status_table['result'].append(':cry: FAILURE')
-                        elif 'SUCCESS' in value['comment']:
+                        elif 'SUCCESS' in row['comment']:
                             status_table['result'].append(':grin: SUCCESS')
                         elif 'UNKNOWN' in row['comment']:
                             status_table['result'].append(':shrug: UNKNOWN')

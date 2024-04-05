@@ -6,9 +6,11 @@
 # The bot helps with requests to add software installations to the
 # EESSI software layer, see https://github.com/EESSI/software-layer
 #
-# author: Kenneth Hoste (@boegel)
 # author: Bob Droege (@bedroge)
+# author: Kenneth Hoste (@boegel)
 # author: Hafsa Naeem (@hafsa-naeem)
+# author: Jonas Qvigstad (@jonas-lq)
+# author: Lara Ramona Peeters (@laraPPr)
 # author: Thomas Roeblitz (@trz42)
 #
 # license: GPLv2
@@ -31,7 +33,8 @@ import tasks.deploy as deploy
 from tasks.deploy import deploy_built_artefacts
 from tools import config
 from tools.args import event_handler_parse
-from tools.commands import EESSIBotCommand, EESSIBotCommandError, get_bot_command
+from tools.commands import EESSIBotCommand, EESSIBotCommandError, \
+    contains_any_bot_command, get_bot_command
 from tools.permissions import check_command_permission
 from tools.pr_comments import create_comment
 
@@ -113,7 +116,25 @@ class EESSIBotSoftwareLayer(PyGHee):
         # currently, only commands in new comments are supported
         #  - commands have the syntax 'bot: COMMAND [ARGS*]'
 
-        # first check if sender is authorized to send any command
+        # only scan for commands in newly created comments
+        if action == 'created':
+            comment_received = request_body['comment']['body']
+            self.log(f"comment action '{action}' is handled")
+        else:
+            # NOTE we do not respond to an updated PR comment with yet another
+            #      new PR comment, because it would make the bot very noisy or
+            #      worse could result in letting the bot enter an endless loop
+            self.log(f"comment action '{action}' not handled")
+            return
+        # at this point we know that we are handling a new comment
+
+        # check if comment does not contain a bot command
+        if not contains_any_bot_command(comment_received):
+            self.log("comment does not contain a bot comment; not processing it further")
+            return
+        # at this point we know that the comment contains a bot command
+
+        # check if sender is authorized to send any command
         # - this serves a double purpose:
         #   1. check permission
         #   2. skip any comment updates that were done by the bot itself
@@ -149,17 +170,6 @@ class EESSIBotSoftwareLayer(PyGHee):
             return
         else:
             self.log(f"account `{sender}` has permission to send commands to bot")
-
-        # only scan for commands in newly created comments
-        if action == 'created':
-            comment_received = request_body['comment']['body']
-            self.log(f"comment action '{action}' is handled")
-        else:
-            # NOTE we do not respond to an updated PR comment with yet another
-            #      new PR comment, because it would make the bot very noisy or
-            #      worse could result in letting the bot enter an endless loop
-            self.log(f"comment action '{action}' not handled")
-            return
 
         # search for commands in comment
         comment_response = ''
@@ -326,15 +336,19 @@ class EESSIBotSoftwareLayer(PyGHee):
         arch_map = get_architecture_targets(self.cfg)
         repo_cfg = get_repo_cfg(self.cfg)
 
-        comment = f"Instance `{app_name}` is configured to build:"
-
-        for arch in arch_map.keys():
-            # check if repo_target_map contains an entry for {arch}
-            if arch not in repo_cfg[REPO_TARGET_MAP]:
-                self.log(f"skipping arch {arch} because repo target map does not define repositories to build for")
-                continue
-            for repo_id in repo_cfg[REPO_TARGET_MAP][arch]:
-                comment += f"\n- arch `{'/'.join(arch.split('/')[1:])}` for repo `{repo_id}`"
+        comment = f"Instance `{app_name}` is configured to build for:"
+        architectures = ['/'.join(arch.split('/')[1:]) for arch in arch_map.keys()]
+        comment += "\n- architectures: "
+        if len(architectures) > 0:
+            comment += f"{', '.join([f'`{arch}`' for arch in architectures])}"
+        else:
+            comment += "none"
+        repositories = list(set([repo_id for repo_ids in repo_cfg[REPO_TARGET_MAP].values() for repo_id in repo_ids]))
+        comment += "\n- repositories: "
+        if len(repositories) > 0:
+            comment += f"{', '.join([f'`{repo_id}`' for repo_id in repositories])}"
+        else:
+            comment += "none"
 
         self.log(f"PR opened: comment '{comment}'")
 
