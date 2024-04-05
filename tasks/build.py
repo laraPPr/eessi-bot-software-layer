@@ -365,14 +365,14 @@ def download_pr(repo_name, branch_name, pr, arch_job_dir, token):
     # - 'git checkout' base branch of pull request
     # - 'curl' diff for pull request
     # - 'git apply' diff file
-
     git_clone_cmd = ' '.join(['git clone', f'git@github.com:{repo_name}.git', arch_job_dir])
+    log(f'cloning with command {git_clone_cmd}')
     clone_output, clone_error, clone_exit_code = run_cmd(
         git_clone_cmd, "Clone repo", arch_job_dir, raise_on_error=False
         )
     if clone_exit_code != 0:
         errror_stage = ERROR_GIT_CLONE
-        return clone_outputn clone_error, clone_exit_code, error_stage
+        return clone_output, clone_error, clone_exit_code, error_stage
 
     git_checkout_cmd = ' '.join([
         'git checkout',
@@ -550,9 +550,8 @@ def prepare_jobs(pr, cfg, event_info, action_filter, token):
             # TODO optimisation? download once, copy and cleanup initial copy?
             download_pr_output, download_pr_error, download_pr_exit_code, error_stage = download_pr(
                 base_repo_name, base_branch_name, pr, job_dir, token
-            )
+                )
             comment_download_pr(base_repo_name, pr, download_pr_exit_code, download_pr_error, error_stage)
-            
             # prepare job configuration file 'job.cfg' in directory <job_dir>/cfg
             cpu_target = '/'.join(arch.split('/')[1:])
             os_type = arch.split('/')[0]
