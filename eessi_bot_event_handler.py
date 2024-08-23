@@ -12,12 +12,14 @@
 # author: Jonas Qvigstad (@jonas-lq)
 # author: Lara Ramona Peeters (@laraPPr)
 # author: Thomas Roeblitz (@trz42)
+# author: Pedro Santos Neves (@Neves-P)
 #
 # license: GPLv2
 #
 
 # Standard library imports
 import sys
+from datetime import datetime, timezone
 
 # Third party imports (anything installed into the local Python environment)
 from pyghee.lib import create_app, get_event_info, PyGHee, read_event_from_json
@@ -26,11 +28,10 @@ import waitress
 
 # Local application imports (anything from EESSI/eessi-bot-software-layer)
 from connections import github
-import tasks.build as build
 from tasks.build import check_build_permission, get_architecture_targets, get_repo_cfg, \
     request_bot_build_issue_comments, submit_build_jobs
-import tasks.deploy as deploy
-from tasks.deploy import deploy_built_artefacts
+from tasks.deploy import deploy_built_artefacts, determine_job_dirs
+from tasks.clean_up import move_to_trash_bin
 from tools import config
 from tools.args import event_handler_parse
 from tools.commands import EESSIBotCommand, EESSIBotCommandError, \
@@ -39,11 +40,63 @@ from tools.permissions import check_command_permission
 from tools.pr_comments import create_comment
 
 
-APP_NAME = "app_name"
-BOT_CONTROL = "bot_control"
-COMMAND_RESPONSE_FMT = "command_response_fmt"
-GITHUB = "github"
-REPO_TARGET_MAP = "repo_target_map"
+REQUIRED_CONFIG = {
+    config.SECTION_ARCHITECTURETARGETS: [
+        config.ARCHITECTURETARGETS_SETTING_ARCH_TARGET_MAP],       # required
+    config.SECTION_BOT_CONTROL: [
+        config.BOT_CONTROL_SETTING_COMMAND_PERMISSION,             # required
+        config.BOT_CONTROL_SETTING_COMMAND_RESPONSE_FMT],          # required
+    config.SECTION_BUILDENV: [
+        config.BUILDENV_SETTING_BUILD_JOB_SCRIPT,                  # required
+        config.BUILDENV_SETTING_BUILD_LOGS_DIR,                    # optional+recommended
+        config.BUILDENV_SETTING_BUILD_PERMISSION,                  # optional+recommended
+        config.BUILDENV_SETTING_CONTAINER_CACHEDIR,                # optional+recommended
+        # config.BUILDENV_SETTING_CVMFS_CUSTOMIZATIONS,              # optional
+        # config.BUILDENV_SETTING_HTTPS_PROXY,                       # optional
+        # config.BUILDENV_SETTING_HTTP_PROXY,                        # optional
+        config.BUILDENV_SETTING_JOB_NAME,                          # required
+        config.BUILDENV_SETTING_JOBS_BASE_DIR,                     # required
+        # config.BUILDENV_SETTING_LOAD_MODULES,                      # optional
+        config.BUILDENV_SETTING_LOCAL_TMP,                         # required
+        config.BUILDENV_SETTING_NO_BUILD_PERMISSION_COMMENT,       # required
+        config.BUILDENV_SETTING_SHARED_FS_PATH,                    # optional+recommended
+        # config.BUILDENV_SETTING_SLURM_PARAMS,                      # optional
+        config.BUILDENV_SETTING_SUBMIT_COMMAND],                   # required
+    config.SECTION_CLEAN_UP: [
+        config.CLEAN_UP_SETTING_TRASH_BIN_ROOT_DIR,                # required
+        config.CLEAN_UP_SETTING_MOVED_JOB_DIRS_COMMENT],           # required
+    config.SECTION_DEPLOYCFG: [
+        config.DEPLOYCFG_SETTING_ARTEFACT_PREFIX,                  # (required)
+        config.DEPLOYCFG_SETTING_ARTEFACT_UPLOAD_SCRIPT,           # required
+        config.DEPLOYCFG_SETTING_BUCKET_NAME,                      # required
+        config.DEPLOYCFG_SETTING_DEPLOY_PERMISSION,                # optional+recommended
+        # config.DEPLOYCFG_SETTING_ENDPOINT_URL,                     # optional
+        config.DEPLOYCFG_SETTING_METADATA_PREFIX,                  # (required)
+        config.DEPLOYCFG_SETTING_NO_DEPLOY_PERMISSION_COMMENT,     # required
+        config.DEPLOYCFG_SETTING_UPLOAD_POLICY],                   # required
+    config.SECTION_DOWNLOAD_PR_COMMENTS: [
+        config.DOWNLOAD_PR_COMMENTS_SETTING_CURL_FAILURE,          # required
+        config.DOWNLOAD_PR_COMMENTS_SETTING_CURL_TIP,              # required
+        config.DOWNLOAD_PR_COMMENTS_SETTING_GIT_APPLY_FAILURE,     # required
+        config.DOWNLOAD_PR_COMMENTS_SETTING_GIT_APPLY_TIP,         # required
+        config.DOWNLOAD_PR_COMMENTS_SETTING_GIT_CHECKOUT_FAILURE,  # required
+        config.DOWNLOAD_PR_COMMENTS_SETTING_GIT_CHECKOUT_TIP,      # required
+        config.DOWNLOAD_PR_COMMENTS_SETTING_GIT_CLONE_FAILURE,     # required
+        config.DOWNLOAD_PR_COMMENTS_SETTING_GIT_CLONE_TIP],        # required
+    config.SECTION_EVENT_HANDLER: [
+        config.EVENT_HANDLER_SETTING_LOG_PATH],                    # required
+    config.SECTION_GITHUB: [
+        config.GITHUB_SETTING_APP_ID,                              # required
+        config.GITHUB_SETTING_APP_NAME,                            # required
+        config.GITHUB_SETTING_INSTALLATION_ID,                     # required
+        config.GITHUB_SETTING_PRIVATE_KEY],                        # required
+    config.SECTION_REPO_TARGETS: [
+        config.REPO_TARGETS_SETTING_REPO_TARGET_MAP,               # required
+        config.REPO_TARGETS_SETTING_REPOS_CFG_DIR],                # required
+    config.SECTION_SUBMITTED_JOB_COMMENTS: [
+        config.SUBMITTED_JOB_COMMENTS_SETTING_INITIAL_COMMENT,     # required
+        config.SUBMITTED_JOB_COMMENTS_SETTING_AWAITS_RELEASE]      # required
+    }
 
 
 class EESSIBotSoftwareLayer(PyGHee):
@@ -62,8 +115,8 @@ class EESSIBotSoftwareLayer(PyGHee):
         super(EESSIBotSoftwareLayer, self).__init__(*args, **kwargs)
 
         self.cfg = config.read_config()
-        event_handler_cfg = self.cfg['event_handler']
-        self.logfile = event_handler_cfg.get('log_path')
+        event_handler_cfg = self.cfg[config.SECTION_EVENT_HANDLER]
+        self.logfile = event_handler_cfg.get(config.EVENT_HANDLER_SETTING_LOG_PATH)
 
     def log(self, msg, *args):
         """
@@ -110,8 +163,8 @@ class EESSIBotSoftwareLayer(PyGHee):
         #      log level is set to debug
         self.log(f"Comment in {issue_url} (owned by @{owner}) {action} by @{sender}")
 
-        app_name = self.cfg[GITHUB][APP_NAME]
-        command_response_fmt = self.cfg[BOT_CONTROL][COMMAND_RESPONSE_FMT]
+        app_name = self.cfg[config.SECTION_GITHUB][config.GITHUB_SETTING_APP_NAME]
+        command_response_fmt = self.cfg[config.SECTION_BOT_CONTROL][config.BOT_CONTROL_SETTING_COMMAND_RESPONSE_FMT]
 
         # currently, only commands in new comments are supported
         #  - commands have the syntax 'bot: COMMAND [ARGS*]'
@@ -301,8 +354,8 @@ class EESSIBotSoftwareLayer(PyGHee):
             request_body = event_info['raw_request_body']
             repo_name = request_body['repository']['full_name']
             pr_number = request_body['pull_request']['number']
-            app_name = self.cfg[GITHUB][APP_NAME]
-            command_response_fmt = self.cfg[BOT_CONTROL][COMMAND_RESPONSE_FMT]
+            app_name = self.cfg[config.SECTION_GITHUB][config.GITHUB_SETTING_APP_NAME]
+            command_response_fmt = self.cfg[config.SECTION_BOT_CONTROL][config.BOT_CONTROL_SETTING_COMMAND_RESPONSE_FMT]
             comment_body = command_response_fmt.format(
                 app_name=app_name,
                 comment_response=msg,
@@ -330,7 +383,7 @@ class EESSIBotSoftwareLayer(PyGHee):
                 PyGithub, not the github from the internal connections module)
         """
         self.log("PR opened: waiting for label bot:build")
-        app_name = self.cfg[GITHUB][APP_NAME]
+        app_name = self.cfg[config.SECTION_GITHUB][config.GITHUB_SETTING_APP_NAME]
         # TODO check if PR already has a comment with arch targets and
         # repositories
         arch_map = get_architecture_targets(self.cfg)
@@ -343,7 +396,8 @@ class EESSIBotSoftwareLayer(PyGHee):
             comment += f"{', '.join([f'`{arch}`' for arch in architectures])}"
         else:
             comment += "none"
-        repositories = list(set([repo_id for repo_ids in repo_cfg[REPO_TARGET_MAP].values() for repo_id in repo_ids]))
+        repositories = list(set([repo_id for repo_ids in repo_cfg[config.REPO_TARGETS_SETTING_REPO_TARGET_MAP].values()
+                            for repo_id in repo_ids]))
         comment += "\n- repositories: "
         if len(repositories) > 0:
             comment += f"{', '.join([f'`{repo_id}`' for repo_id in repositories])}"
@@ -548,12 +602,65 @@ class EESSIBotSoftwareLayer(PyGHee):
         print(port_info)
         self.log(port_info)
 
-        event_handler_cfg = self.cfg['event_handler']
-        my_logfile = event_handler_cfg.get('log_path')
-        log_file_info = "logging in to %s" % my_logfile
+        log_file_info = "logging in to %s" % self.logfile
         print(log_file_info)
         self.log(log_file_info)
         waitress.serve(app, listen='*:%s' % port)
+
+    def handle_pull_request_closed_event(self, event_info, pr):
+        """
+        Handle events of type pull_request with the action 'closed'. It
+        determines used by the PR and moves them to the trash_bin. It also adds
+        information to the logs and a comment to the PR.
+
+        Args:
+        event_info (dict): event received by event_handler
+        pr (github.PullRequest.PullRequest): instance representing the pull request
+
+        Returns:
+        github.IssueComment.IssueComment instance or None (note, github refers to
+        PyGithub, not the github from the internal connections module)
+        """
+
+        # Detect event and report if PR was merged or closed
+        request_body = event_info['raw_request_body']
+        # next value: True -> PR merged, False -> PR closed
+        mergedOrClosed = request_body['pull_request']['merged']
+        status = "merged" if mergedOrClosed else "closed"
+
+        self.log(f"PR {pr.number}: PR got {status} (json value: {mergedOrClosed})")
+
+        # 1) determine the jobs that have been run for the PR
+        self.log(f"PR {pr.number}: determining directories to be moved to trash bin")
+        job_dirs = determine_job_dirs(pr.number)
+
+        # 2) Get trash_bin_dir from configs
+        trash_bin_root_dir = self.cfg[config.SECTION_CLEAN_UP][config.CLEAN_UP_SETTING_TRASH_BIN_ROOT_DIR]
+
+        repo_name = request_body['repository']['full_name']
+        dt_start = datetime.now(timezone.utc)
+        trash_bin_dir = "/".join([trash_bin_root_dir, repo_name, dt_start.strftime('%Y.%m.%d')])
+
+        # Subdirectory with date of move. Also with repository name. Handle symbolic links (later?)
+        # cron job deletes symlinks?
+
+        # 3) move the directories to the trash_bin
+        self.log(f"PR {pr.number}: moving directories to trash bin {trash_bin_dir}")
+        move_to_trash_bin(trash_bin_dir, job_dirs)
+        dt_end = datetime.now(timezone.utc)
+        dt_delta = dt_end - dt_start
+        seconds_elapsed = dt_delta.days * 24 * 3600 + dt_delta.seconds
+        self.log(f"PR {pr.number}: moved directories to trash bin {trash_bin_dir} (took {seconds_elapsed} seconds)")
+
+        # 4) report move to pull request
+        repo_name = pr.base.repo.full_name
+        gh = github.get_instance()
+        repo = gh.get_repo(repo_name)
+        pull_request = repo.get_pull(pr.number)
+        clean_up_comment = self.cfg[config.SECTION_CLEAN_UP][config.CLEAN_UP_SETTING_MOVED_JOB_DIRS_COMMENT]
+        moved_comment = clean_up_comment.format(job_dirs=job_dirs, trash_bin_dir=trash_bin_dir)
+        issue_comment = pull_request.create_issue_comment(moved_comment)
+        return issue_comment
 
 
 def main():
@@ -564,13 +671,12 @@ def main():
     """
     opts = event_handler_parse()
 
-    required_config = {
-        build.SUBMITTED_JOB_COMMENTS: [build.INITIAL_COMMENT, build.AWAITS_RELEASE],
-        build.BUILDENV: [build.NO_BUILD_PERMISSION_COMMENT],
-        deploy.DEPLOYCFG: [deploy.NO_DEPLOY_PERMISSION_COMMENT]
-    }
     # config is read and checked for settings to raise an exception early when the event_handler starts.
-    config.check_required_cfg_settings(required_config)
+    if config.check_required_cfg_settings(REQUIRED_CONFIG):
+        print("Configuration check: PASSED")
+    else:
+        print("Configuration check: FAILED")
+        sys.exit(1)
     github.connect()
 
     if opts.file:

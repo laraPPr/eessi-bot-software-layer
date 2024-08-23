@@ -87,6 +87,10 @@ container_cachedir = PATH_TO_SHARED_DIRECTORY
 # http_proxy = http://PROXY_DNS:3128/
 # https_proxy = http://PROXY_DNS:3128/
 
+# Used to give all jobs of a bot instance the same name. Can be used to allow
+# multiple bot instances running on the same Slurm cluster.
+job_name = prod
+
 # directory under which the bot prepares directories per job
 #   structure created is as follows: YYYY.MM/pr_PR_NUMBER/event_EVENT_ID/run_RUN_NUMBER/OS+SUBDIR
 jobs_base_dir = $HOME/jobs
@@ -259,3 +263,7 @@ curl_failure = Unable to download the `.diff` file.
 curl_tip = _Tip: This could be a connection failure. Try again and if the issue remains check if the address is correct_
 git_apply_failure = Unable to download or merge changes between the source branch and the destination branch.
 git_apply_tip = _Tip: This can usually be resolved by syncing your branch and resolving any merge conflicts._
+
+[clean_up]
+trash_bin_dir = $HOME/trash_bin
+moved_job_dirs_comment = PR merged! Moved `{job_dirs}` to `{trash_bin_dir}`

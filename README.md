@@ -376,6 +376,13 @@ Slurm job. However, when entering the [EESSI compatibility layer](https://www.ee
 most environment settings are cleared. Hence, they need to be set again at a later stage.
 
 ```
+job_name = JOB_NAME
+```
+Replace `JOB_NAME` with a string of at least 3 characters that is used as job
+name when a job is submitted. This is used to filter jobs, e.g., should be used
+to make sure that multiple bot instances can run in the same Slurm environment.
+
+```
 jobs_base_dir = PATH_TO_JOBS_BASE_DIR
 ```
 Replace `PATH_TO_JOBS_BASE_DIR` with an absolute filepath like `/home/YOUR_USER_NAME/jobs` (or another path of your choice). Per job the directory structure under `jobs_base_dir` is `YYYY.MM/pr_PR_NUMBER/event_EVENT_ID/run_RUN_NUMBER/OS+SUBDIR`. The base directory will contain symlinks using the job ids pointing to the job's working directory `YYYY.MM/...`.
@@ -719,6 +726,21 @@ git_apply_tip = _Tip: This can usually be resolved by syncing your branch and re
 ```
 `git_apply_tip` should guide the contributor/maintainer about resolving the cause
 of `git apply` failing.
+
+#### `[clean_up]` section
+
+The `[clean_up]` section includes settings related to cleaning up disk used by merged (and closed) PRs.
+```
+trash_bin_dir = PATH/TO/TRASH_BIN_DIRECTORY
+```
+Ideally this is on the same filesystem used by `jobs_base_dir` and `job_ids_dir` to efficiently move data
+into the trash bin. If it resides on a different filesystem, the data will be copied.
+
+```
+moved_job_dirs_comment = PR merged! Moved `{job_dirs}` to `{trash_bin_dir}`
+```
+Template that is used by the bot to add a comment to a PR noting down which directories have been
+moved and where.
 
 # Instructions to run the bot components
 
